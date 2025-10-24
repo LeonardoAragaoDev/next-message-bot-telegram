@@ -3,27 +3,28 @@
 namespace App\Http\Controllers;
 
 use App\Models\BotConfig;
+use App\Models\Channel;
 use App\Models\UserState;
 use Telegram\Bot\Api;
 use Telegram\Bot\Objects\Update;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Keyboard\Keyboard;
-use App\Http\Controllers\UserController; // Importamos o novo Controller
-
-// use Telegram\Bot\Keyboard\ReplyKeyboardRemove;
+use App\Http\Controllers\UserController;
 
 class TelegramBotController extends Controller
 {
     protected Api $telegram;
     protected string $storageChannelId;
-    protected UserController $userController; // Injetamos o UserController
+    protected UserController $userController;
+    protected ChannelController $channelController;
 
-    // Injetamos o UserController no construtor
-    public function __construct(Api $telegram, UserController $userController)
+    // Injetamos o ChannelController no construtor
+    public function __construct(Api $telegram, UserController $userController, ChannelController $channelController)
     {
         $this->telegram = $telegram;
         $this->userController = $userController;
+        $this->channelController = $channelController; // Atribuímos o ChannelController
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
     }
 
@@ -174,7 +175,12 @@ class TelegramBotController extends Controller
         // --- Lógica de Fluxo (Etapa 1: Aguardando Mensagem do Canal) ---
         elseif ($userState->state === "awaiting_channel_message") {
             if ($message->getForwardFromChat() && $message->getForwardFromChat()->getType() === "channel") {
+                $forwardedChat = $message->getForwardFromChat();
                 $forwardedChatId = $message->getForwardFromChat()->getId();
+
+                // NOVIDADE: Salva/Atualiza as informações do Canal
+                $dbChannel = $this->channelController->saveOrUpdateTelegramChannel($forwardedChat);
+                $channelName = $dbChannel->title ?: 'Canal Sem Título'; // Nome amigável
 
                 $userState->state = "awaiting_response_message";
                 $userState->data = (string) $forwardedChatId;
@@ -185,7 +191,7 @@ class TelegramBotController extends Controller
 
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "✅ Canal ID `{$forwardedChatId}` registrado. \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
+                    "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado. \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
                     "parse_mode" => "Markdown",
                     "reply_markup" => new Keyboard([
                         "keyboard" => $keyboard,
@@ -263,7 +269,10 @@ class TelegramBotController extends Controller
 
             $tempData = json_decode($userState->data, true);
 
-            $channelId = $tempData["channel_id"]; // Canal de destino
+            $channelId = $tempData["channel_id"];
+            // NOVIDADE: Busca o nome do canal para a mensagem de sucesso
+            $dbChannel = Channel::where('channel_id', $channelId)->first();
+            $channelName = $dbChannel ? $dbChannel->title : "Canal Desconhecido";
             $responseMessageId = $tempData["response_message_id"]; // ID da mensagem no canal drive
 
             // --- Lógica de EXCLUSÃO DA MENSAGEM ANTERIOR ---
@@ -314,9 +323,8 @@ class TelegramBotController extends Controller
 
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal `{$channelId}`.\n\n ✅ Modo de Envio: *" . ($isReply ? "Resposta" : "Nova Mensagem") . "*",
+                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *" . ($isReply ? "Resposta" : "Nova Mensagem") . "*",
                 "parse_mode" => "Markdown",
-                // "reply_markup" => new ReplyKeyboardRemove(),
                 "reply_markup" => new Keyboard([
                     "keyboard" => $keyboard,
                     "resize_keyboard" => true,
