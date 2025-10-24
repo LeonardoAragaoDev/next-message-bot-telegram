@@ -12,12 +12,9 @@ return new class extends Migration {
     {
         Schema::create('bot_configs', function (Blueprint $table) {
             $table->id();
-            // Armazena o ID do canal (o ID negativo do chat/canal)
-            $table->string('channel_id')->unique()->comment('ID do canal a ser monitorado, obtido via encaminhamento.');
-            // Armazena o ID do usuário que configurou (para gerenciamento)
+            $table->string('channel_id')->unique()->comment('ID do canal a ser monitorado (destino).');
             $table->bigInteger('user_id')->nullable()->comment('ID do usuário que configurou o bot.');
-            // A mensagem que o bot irá enviar
-            $table->text('response_message')->comment('Mensagem a ser enviada em resposta a novas publicações.');
+            $table->bigInteger('response_message_id')->comment('ID da mensagem no canal de armazenamento que será encaminhada.');
             $table->boolean('is_reply')->default(true)->comment('Define se o bot deve responder à postagem (true) ou enviar uma mensagem nova (false).');
             $table->timestamps();
         });

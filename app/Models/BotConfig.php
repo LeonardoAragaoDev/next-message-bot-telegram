@@ -12,6 +12,8 @@ class BotConfig extends Model
     protected $fillable = [
         'channel_id',
         'user_id',
-        'response_message',
+        'response_message_id',
+        'is_reply',
     ];
+
 }
