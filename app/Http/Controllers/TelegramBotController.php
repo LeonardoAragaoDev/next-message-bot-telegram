@@ -9,16 +9,21 @@ use Telegram\Bot\Objects\Update;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Keyboard\Keyboard;
+use App\Http\Controllers\UserController; // Importamos o novo Controller
+
 // use Telegram\Bot\Keyboard\ReplyKeyboardRemove;
 
 class TelegramBotController extends Controller
 {
     protected Api $telegram;
     protected string $storageChannelId;
+    protected UserController $userController; // Injetamos o UserController
 
-    public function __construct(Api $telegram)
+    // Injetamos o UserController no construtor
+    public function __construct(Api $telegram, UserController $userController)
     {
         $this->telegram = $telegram;
+        $this->userController = $userController;
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
     }
 
@@ -50,8 +55,7 @@ class TelegramBotController extends Controller
         $idDiferenteCanalArmazenamento = $chatIdFromMessage != $this->storageChannelId;
 
         // Para não receber webhooks do próprio canal de armazenamento
-        if ($message && $idDiferenteCanalArmazenamento) {
-            // if ($message && method_exists($message, 'getChat')) {
+        if ($idDiferenteCanalArmazenamento) {
             $chatType = $message->getChat()->getType();
             Log::info("Tipo de Chat: {$chatType}");
 
@@ -65,24 +69,39 @@ class TelegramBotController extends Controller
                 $this->handleChannelUpdate($update, $message);
             }
         } else {
-            Log::info("handleWebhook: Atualização ignorada (não é message/channel_post ou não tem getChat).");
+            Log::info("handleWebhook: Atualização ignorada (veio do canal de armazenamento).");
         }
 
         return response("OK", 200);
     }
 
     /**
-     * Gerencia o fluxo de configuração.
+     * Gerencia o fluxo de configuração em chat privado.
      */
     protected function handlePrivateChat(Update $update)
     {
         $message = $update->getMessage();
         $chatId = $message->getChat()->getId();
-        $userId = $message->getFrom()->getId();
-        $text = $message->getText() ? strtolower($message->getText()) : ''; // Lida com $message sem texto
+        $telegramUser = $message->getFrom();
 
-        // 1. Busca o estado atual do usuário
-        $userState = UserState::firstOrCreate(["telegram_user_id" => $userId], ["state" => "idle", "data" => null]);
+        // O ID do Telegram. Será usado para salvar/atualizar o User.
+        $telegramUserId = $telegramUser->getId();
+
+        // --- MELHORIA: Salva/Atualiza o usuário antes de qualquer lógica ---
+        // $dbUser agora é o objeto App\Models\User.
+        $dbUser = $this->userController->saveOrUpdateTelegramUser($telegramUser);
+
+        // Usamos o ID do Laravel ($dbUser->id) para salvar o estado.
+        $localUserId = $dbUser->id;
+
+        $text = $message->getText() ? strtolower($message->getText()) : '';
+
+        // 1. Busca o estado atual do usuário usando o user_id local
+        // MUDANÇA AQUI: de 'telegram_user_id' para 'user_id'
+        $userState = UserState::firstOrCreate(
+            ["user_id" => $localUserId],
+            ["state" => "idle", "data" => null]
+        );
         Log::info("User state " . ($userState ? $userState->state : 'null'));
 
         // --- Lógica para o Comando /cancelar (Prioridade) ---
@@ -166,7 +185,7 @@ class TelegramBotController extends Controller
 
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "✅ Canal ID `{$forwardedChatId}` registrado. \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.** Para cancelar, digite /cancelar.",
+                    "text" => "✅ Canal ID `{$forwardedChatId}` registrado. \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
                     "parse_mode" => "Markdown",
                     "reply_markup" => new Keyboard([
                         "keyboard" => $keyboard,
@@ -222,8 +241,8 @@ class TelegramBotController extends Controller
 
             // Envia a pergunta com botões
             $keyboard = [
-                ["Enviar como Resposta (Recomendado)"],
-                ["Enviar como Nova Mensagem (Sem resposta)"],
+                ["Enviar como Resposta"],
+                ["Enviar como Nova Mensagem"],
             ];
 
             $this->telegram->sendMessage([
@@ -277,7 +296,7 @@ class TelegramBotController extends Controller
             BotConfig::updateOrCreate(
                 ["channel_id" => $channelId],
                 [
-                    "user_id" => $userId,
+                    "user_id" => $telegramUserId,
                     "response_message_id" => $responseMessageId,
                     "is_reply" => $isReply,
                 ]
@@ -289,12 +308,13 @@ class TelegramBotController extends Controller
             $userState->save();
             $keyboard = [
                 ["/start"],
+                ["/configurar"],
                 ["/commands"],
             ];
 
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal `{$channelId}`.\n\nModo de Envio: *" . ($isReply ? "Resposta" : "Nova Mensagem") . "*",
+                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal `{$channelId}`.\n\n ✅ Modo de Envio: *" . ($isReply ? "Resposta" : "Nova Mensagem") . "*",
                 "parse_mode" => "Markdown",
                 // "reply_markup" => new ReplyKeyboardRemove(),
                 "reply_markup" => new Keyboard([
@@ -308,9 +328,10 @@ class TelegramBotController extends Controller
 
         // --- Outros comandos e Resposta Padrão ---
         elseif ($text === "/start") {
+            // O usuário já foi salvo/atualizado pelo UserController no início do método.
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "🤖 *Olá! Eu sou o NextMessageBot.* Envie o comando /configurar para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.",
+                "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.* Envie o comando /configurar para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.",
                 "parse_mode" => "Markdown",
             ]);
         }
@@ -354,7 +375,7 @@ class TelegramBotController extends Controller
             $config = BotConfig::where("channel_id", $channelId)->first();
 
             if ($config && $config->response_message_id) { // Verifica se há uma mensagem ID configurada
-                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Disparando resposta (Forward).");
+                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Disparando resposta (Copy).");
 
                 $params = [
                     'chat_id' => $channelId, // Canal de destino
@@ -369,7 +390,7 @@ class TelegramBotController extends Controller
                     $params["reply_to_message_id"] = $messageId;
                 }
 
-                // 3. Dispara a mensagem configurada usando forwardMessage
+                // 3. Dispara a mensagem configurada usando copyMessage
                 $this->telegram->copyMessage($params);
 
             } else {

@@ -12,7 +12,12 @@ return new class extends Migration {
     {
         Schema::create('user_states', function (Blueprint $table) {
             $table->id();
-            $table->bigInteger('telegram_user_id')->unique();
+
+            $table->foreignId('user_id')
+                ->unique() // Garante 1 estado por usuário local
+                ->constrained() // Cria a restrição de chave estrangeira para a tabela 'users'
+                ->onDelete('cascade'); // Opcional: Se o usuário for deletado, o estado também é
+
             $table->string('state'); // Ex: 'awaiting_channel_message', 'awaiting_response_message'
             $table->text('data')->nullable(); // Para armazenar temporariamente o channel_id
             $table->timestamps();

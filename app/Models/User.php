@@ -2,10 +2,10 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Database\Eloquent\Builder; // Importar para usar o Scopes
 
 class User extends Authenticatable
 {
@@ -15,12 +15,21 @@ class User extends Authenticatable
     /**
      * The attributes that are mass assignable.
      *
+     * Adicionamos os campos do Telegram aqui.
+     *
      * @var list<string>
      */
     protected $fillable = [
         'name',
         'email',
         'password',
+        // --- Novos Campos do Telegram ---
+        'telegram_user_id',
+        'first_name',
+        'last_name',
+        'username',
+        'language_code',
+        // -------------------------------
     ];
 
     /**
@@ -44,5 +53,10 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function state()
+    {
+        return $this->hasOne(UserState::class);
     }
 }
