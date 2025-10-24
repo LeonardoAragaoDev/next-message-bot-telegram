@@ -24,7 +24,7 @@ class TelegramBotController extends Controller
     {
         $this->telegram = $telegram;
         $this->userController = $userController;
-        $this->channelController = $channelController; // Atribuímos o ChannelController
+        $this->channelController = $channelController;
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
     }
 
@@ -176,14 +176,44 @@ class TelegramBotController extends Controller
         elseif ($userState->state === "awaiting_channel_message") {
             if ($message->getForwardFromChat() && $message->getForwardFromChat()->getType() === "channel") {
                 $forwardedChat = $message->getForwardFromChat();
-                $forwardedChatId = $message->getForwardFromChat()->getId();
+                $forwardedChatId = (string) $forwardedChat->getId();
 
-                // NOVIDADE: Salva/Atualiza as informações do Canal
+                // 1. Salva/Atualiza as informações do Canal
                 $dbChannel = $this->channelController->saveOrUpdateTelegramChannel($forwardedChat);
                 $channelName = $dbChannel->title ?: 'Canal Sem Título'; // Nome amigável
 
+                // 2. NOVIDADE: Verifica as permissões do bot
+                $permissions = $this->channelController->checkBotPermissions($forwardedChatId);
+
+                if (!$permissions['is_admin']) {
+                    // $userState->state = "idle";
+                    // $userState->data = null;
+                    // $userState->save();
+
+                    $this->telegram->sendMessage([
+                        "chat_id" => $chatId,
+                        "text" => "❌ *Configuração Falhou!* O bot não é administrador do canal *{$channelName}* (`{$forwardedChatId}`). Por favor, promova o bot a administrador e tente novamente.",
+                        "parse_mode" => "Markdown",
+                    ]);
+                    return;
+                }
+
+                if (!$permissions['can_post']) {
+                    $userState->state = "idle";
+                    $userState->data = null;
+                    $userState->save();
+
+                    $this->telegram->sendMessage([
+                        "chat_id" => $chatId,
+                        "text" => "❌ *Configuração Falhou!* O bot é administrador do canal *{$channelName}* (`{$forwardedChatId}`), mas *não tem permissão* para enviar mensagens. Por favor, edite as permissões do bot (deve ter a permissão *Post Messages*) e tente novamente.",
+                        "parse_mode" => "Markdown",
+                    ]);
+                    return;
+                }
+
+                // Se a validação passou, continua para a próxima etapa (Etapa 2)
                 $userState->state = "awaiting_response_message";
-                $userState->data = (string) $forwardedChatId;
+                $userState->data = $forwardedChatId;
                 $userState->save();
                 $keyboard = [
                     ["/cancelar"],
@@ -191,7 +221,7 @@ class TelegramBotController extends Controller
 
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado. \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
+                    "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado e permissões OK! \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
                     "parse_mode" => "Markdown",
                     "reply_markup" => new Keyboard([
                         "keyboard" => $keyboard,
