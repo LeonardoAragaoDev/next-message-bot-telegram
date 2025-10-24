@@ -220,7 +220,7 @@ class TelegramBotController extends Controller
         elseif ($text === "/start") {
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "*Olá! Eu sou o NextMessageBot.* Envie o comando /configurar para iniciar a automação no seu canal.",
+                "text" => "🤖 *Olá! Eu sou o NextMessageBot.* Envie o comando /configurar para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.",
                 "parse_mode" => "Markdown",
             ]);
         }
@@ -238,7 +238,7 @@ class TelegramBotController extends Controller
         elseif ($text === "/commands") {
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "/start - Iniciar o bot\n\n /configurar - Configurar o bot para um canal\n\n /status - Verificar status do bot",
+                "text" => "⚙️ /start - Iniciar o bot\n\n /configurar - Configurar o bot para um canal\n\n /status - Verificar status do bot",
                 "parse_mode" => "Markdown",
             ]);
         }
