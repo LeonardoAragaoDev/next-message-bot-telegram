@@ -51,20 +51,38 @@ class TelegramBotController extends Controller
     }
 
     /**
-     * Resolve o usuário do banco de dados a partir do Update.
+     * Resolve o usuário do banco de dados a partir do Update,
+     * garantindo que o objeto retornado seja Telegram\Bot\Objects\User.
      */
     private function resolveDbUserFromUpdate(Update $update)
     {
         $user = null;
-        if ($update->getMessage()) {
-            $user = $update->getMessage()->getFrom();
-        } elseif ($update->getCallbackQuery()) {
-            $user = $update->getCallbackQuery()->getFrom();
+
+        // 1. Prioriza o from do CallbackQuery (O USUÁRIO que clicou)
+        if ($callbackQuery = $update->getCallbackQuery()) {
+            $user = $callbackQuery->getFrom();
         }
+        // 2. Em seguida, verifica o from da Message (O USUÁRIO que enviou a mensagem)
+        elseif ($message = $update->getMessage()) {
+            $user = $message->getFrom();
+        }
+        // Se for outro tipo de atualização, $user será null
 
         if ($user) {
+            // Log para debug. O objeto $user AQUI é Telegram\Bot\Objects\User
+            Log::info("User info from update (ID): " . $user->getId());
+
+            // A checagem de bot é importante, mas o from de um CallbackQuery
+            // geralmente é o usuário humano (is_bot: false)
+            if ($user->getIsBot()) {
+                Log::warning("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId());
+                return null;
+            }
+
+            // $user é um Telegram\Bot\Objects\User, resolvendo o TypeError
             return $this->userController->saveOrUpdateTelegramUser($user);
         }
+
         return null;
     }
 
@@ -107,7 +125,7 @@ class TelegramBotController extends Controller
 
                 // 2. Canal (Disparo Automático)
                 elseif ($chatType === "channel") {
-                    $this->handleChannelUpdate($update, $message);
+                    $this->channelController->handleChannelUpdate($update, $message);
                 }
             } else {
                 Log::info("handleWebhook: Atualização ignorada (veio do canal de armazenamento).");
@@ -165,7 +183,7 @@ class TelegramBotController extends Controller
                 'message_id' => $messageId,
                 'text' => "✅ Configuração iniciada! Preparando a primeira etapa...",
                 'parse_mode' => 'Markdown',
-                'reply_markup' => Keyboard::inlineButton([]) // Remove os botões
+                'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
             ]);
 
             // Envia a mensagem da Etapa 1
@@ -236,7 +254,7 @@ class TelegramBotController extends Controller
 
         // 2. Verifica se a callback é sobre o modo de resposta (Etapa 3)
         if (strpos($callbackData, 'set_reply_mode_') === 0) {
-            $userState = UserState::where("user_id", $localUserId)->first(); // Usa $localUserId
+            $userState = UserState::where("user_id", $localUserId)->first();
 
             // Apenas permite se o estado for o esperado (awaiting_reply_mode)
             if (!$userState || $userState->state !== "awaiting_reply_mode") {
@@ -246,7 +264,7 @@ class TelegramBotController extends Controller
                     'message_id' => $messageId,
                     'text' => "❌ Ação expirada ou inválida. Por favor, comece o fluxo com /configure.",
                     'parse_mode' => 'Markdown',
-                    'reply_markup' => Keyboard::inlineButton([]) // Remove os botões
+                    'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
                 ]);
                 return;
             }
@@ -294,14 +312,14 @@ class TelegramBotController extends Controller
             $userState->save();
 
             // Mensagem Final de Sucesso (Editando a mensagem original e removendo os botões)
-            $replyModeText = $isReply ? "Resposta (Reply)" : "Nova Mensagem";
+            $replyModeText = $isReply ? "Resposta " : "Nova Mensagem";
 
             $this->telegram->editMessageText([
                 'chat_id' => $chatId,
                 'message_id' => $messageId,
                 "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *{$replyModeText}*",
                 "parse_mode" => "Markdown",
-                'reply_markup' => Keyboard::inlineButton([]) // Remove os botões inline
+                'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
             ]);
 
             return;
@@ -341,14 +359,14 @@ class TelegramBotController extends Controller
                 'inline_keyboard' => [
                     [
                         ['text' => 'Entrar no Canal', 'url' => $this->adminChannelInviteLink],
-                        ['text' => 'Iniciar Configuração', 'callback_data' => '/configure'],
+                        // ['text' => 'Iniciar Configuração', 'callback_data' => '/configure'],
                     ],
                 ]
             ]);
 
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.* Envie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.\n\nPara usar o bot, você deve estar inscrito no nosso [Canal Oficial]({$this->adminChannelInviteLink}).",
+                "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.\n\nPara usar o bot, você deve estar inscrito no nosso [canal oficial]({$this->adminChannelInviteLink}).",
                 "parse_mode" => "Markdown",
                 "reply_markup" => $inlineKeyboard,
             ]);
@@ -540,7 +558,7 @@ class TelegramBotController extends Controller
             $inlineKeyboard = Keyboard::inlineButton([
                 'inline_keyboard' => [
                     [
-                        ['text' => 'Enviar como Resposta (Reply)', 'callback_data' => 'set_reply_mode_reply'],
+                        ['text' => 'Enviar como Resposta', 'callback_data' => 'set_reply_mode_reply'],
                     ],
                     [
                         ['text' => 'Enviar como Nova Mensagem', 'callback_data' => 'set_reply_mode_new'],
@@ -595,56 +613,6 @@ class TelegramBotController extends Controller
                     "parse_mode" => "Markdown",
                 ]);
             }
-        }
-    }
-
-    /**
-     * Executa a função principal do bot: encaminhar a mensagem configurada no canal.
-     */
-    protected function handleChannelUpdate(Update $update, $message)
-    {
-        $channelId = (string) $message->getChat()->getId();
-        $messageId = $message->getMessageId();
-
-        Log::info("handleChannelUpdate: Processando atualização do canal ID: {$channelId}");
-
-        // Verifica se é uma postagem de conteúdo (não uma postagem de serviço como entrada/saída de membro)
-        $effectiveType = $message->getEffectiveType();
-        if (!in_array($effectiveType, ['service', 'new_chat_members', 'left_chat_member', 'channel_chat_created' /* etc. */])) {
-
-            Log::info("handleChannelUpdate: Tipo de conteúdo suportado detectado. Buscando configuração...");
-
-            // 2. Busca a configuração de resposta para este canal
-            $config = BotConfig::where("channel_id", $channelId)->first();
-
-            if ($config && $config->response_message_id) { // Verifica se há uma mensagem ID configurada
-                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Disparando resposta (Copy).");
-
-                $params = [
-                    'chat_id' => $channelId, // Canal de destino
-                    'from_chat_id' => $this->storageChannelId, // Canal de origem (drive)
-                    'message_id' => $config->response_message_id, // ID da mensagem no canal drive
-                    'disable_notification' => false,
-                ];
-
-                // Condição para enviar como resposta (Reply) ou nova mensagem
-                if ($config->is_reply) {
-                    $params["disable_notification"] = true; // Geralmente se desativa a notificação para replies automáticos
-                    $params["reply_to_message_id"] = $messageId; // Responde à mensagem original do canal
-                }
-
-                // 3. Dispara a mensagem configurada usando copyMessage
-                try {
-                    $this->telegram->copyMessage($params);
-                } catch (\Exception $e) {
-                    Log::error("ERRO ao disparar copyMessage no canal {$channelId}: " . $e->getMessage());
-                }
-
-            } else {
-                Log::warning("handleChannelUpdate: Configuração NÃO ENCONTRADA ou response_message_id ausente para o canal ID: {$channelId}.");
-            }
-        } else {
-            Log::info("handleChannelUpdate: Conteúdo ignorado (postagem de serviço ou tipo ignorado: {$effectiveType}).");
         }
     }
 }

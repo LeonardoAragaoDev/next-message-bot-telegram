@@ -2,19 +2,68 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotConfig;
 use App\Models\Channel;
 use Telegram\Bot\Api;
 use Telegram\Bot\Objects\Chat as TelegramChatObject;
 use Illuminate\Support\Facades\Log;
+use Telegram\Bot\Objects\Update;
 
 class ChannelController extends Controller
 {
-    // A API do Telegram precisa ser injetada para fazer chamadas de permissão.
     protected Api $telegram;
+    protected string $storageChannelId;
 
     public function __construct(Api $telegram)
     {
         $this->telegram = $telegram;
+        $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
+    }
+
+    /**
+     * Executa a função principal do bot: encaminhar a mensagem configurada no canal.
+     */
+    public function handleChannelUpdate(Update $update, $message)
+    {
+        $channelId = (string) $message->getChat()->getId();
+        $messageId = $message->getMessageId();
+
+        Log::info("handleChannelUpdate: Processando atualização do canal ID: {$channelId}");
+
+        $effectiveType = $message->getEffectiveType();
+        if (!in_array($effectiveType, ['service', 'new_chat_members', 'left_chat_member', 'channel_chat_created' /* etc. */])) {
+
+            Log::info("handleChannelUpdate: Tipo de conteúdo suportado detectado. Buscando configuração...");
+
+            $config = BotConfig::where("channel_id", $channelId)->first();
+
+            if ($config && $config->response_message_id) {
+                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Disparando resposta (Copy).");
+
+                $params = [
+                    'chat_id' => $channelId,
+                    'from_chat_id' => $this->storageChannelId,
+                    'message_id' => $config->response_message_id,
+                    'disable_notification' => false,
+                ];
+
+                if ($config->is_reply) {
+                    $params["disable_notification"] = true;
+                    $params["reply_to_message_id"] = $messageId;
+                }
+
+                try {
+                    $this->telegram->copyMessage($params);
+                } catch (\Exception $e) {
+                    Log::error("ERRO ao disparar copyMessage no canal {$channelId}: " . $e->getMessage());
+                }
+
+            } else {
+                Log::warning("handleChannelUpdate: Configuração NÃO ENCONTRADA ou response_message_id ausente para o canal ID: {$channelId}.");
+            }
+        } else {
+            Log::info("handleChannelUpdate: Conteúdo ignorado (postagem de serviço ou tipo ignorado: {$effectiveType}).");
+        }
     }
 
     /**
