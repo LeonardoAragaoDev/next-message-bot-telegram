@@ -10,10 +10,10 @@ Isso é ideal para incluir botões de reação, links de comentários, ou qualqu
 
 ## ✨ Recursos Principais
 
-* **Automação de Resposta:** Dispara uma mensagem configurada após cada novo post no canal.
-* **Alta Fidelidade:** Usa `copyMessage` para replicar perfeitamente o conteúdo original (texto, mídia, botões inline).
-* **Modos de Envio Flexíveis:** Escolha se a mensagem de resposta deve ser enviada como um **Reply** (resposta) ao post principal ou como uma **Nova Mensagem** separada.
-* **Fluxo de Configuração Amigável:** Interface de configuração passo a passo via chat privado.
+-   **Automação de Resposta:** Dispara uma mensagem configurada após cada novo post no canal.
+-   **Alta Fidelidade:** Usa `copyMessage` para replicar perfeitamente o conteúdo original (texto, mídia, botões inline).
+-   **Modos de Envio Flexíveis:** Escolha se a mensagem de resposta deve ser enviada como um **Reply** (resposta) ao post principal ou como uma **Nova Mensagem** separada.
+-   **Fluxo de Configuração Amigável:** Interface de configuração passo a passo via chat privado.
 
 ---
 
@@ -21,10 +21,10 @@ Isso é ideal para incluir botões de reação, links de comentários, ou qualqu
 
 Confira o bot em ação e junte-se à nossa comunidade:
 
-| Recurso | Link |
-| :--- | :--- |
-| **Bot Oficial** | 👉 [@NextMessageBot](https://t.me/NextMessageBot) |
-| **Canal de Novidades** | 👉 [@BotNovidades](https://t.me/BotNovidades) |
+| Recurso                | Link                                                        |
+| :--------------------- | :---------------------------------------------------------- |
+| **Bot Oficial**        | 👉 [@NextMessageBot](https://t.me/NextMessageBot)           |
+| **Canal de Novidades** | 👉 [@BotNovidades](https://t.me/BotNovidades)               |
 | **Grupo de Discussão** | 👉 [Grupo do @BotNovidades](https://t.me/+7Igu38iX7Ns5YjUx) |
 
 ---
@@ -41,17 +41,20 @@ Este projeto é construído em **PHP** usando o framework **Laravel** e a biblio
 4.  Um túnel de acesso público (Ex: **ngrok** ou **Expose**) para expor sua URL local.
 
 ### 1. Clonar o Repositório
+
 ```bash
 git clone git@github.com:seu-usuario/next-message-telegram-bot.git
 cd next-message-telegram-bot
 ```
 
 ### 2. Instalar dependências
+
 ```bash
 composer install
 ```
 
 ### 3. Configuração do Ambiente (.env)
+
 ```env
 # --- Configuração Geral do Laravel ---
 APP_NAME="Next Message Bot"
@@ -76,24 +79,31 @@ TELEGRAM_ADMIN_CHANNEL_INVITE_PRIVATE_LINK="[https://t.me/c/](https://t.me/c/)..
 ```
 
 ### 4. Rodar Migrações
+
 ```bash
 php artisan migrate
 ```
 
 ### 5. Iniciar o Servidor (e o Túnel Público)
+
 Inicie o servidor local do Laravel:
+
 ```bash
 php artisan serve
 ```
+
 Em uma janela separada, inicie o túnel público (Ex: ngrok) e anote a URL gerada (por exemplo, `https://abcdefg.ngrok-free.app`).
 
 ### 6. Configurar o Webhook do Telegram
+
 Finalmente, você deve informar ao Telegram qual URL ele deve usar para enviar as atualizações (webhooks). Substitua `TOKEN_DO_SEU_BOT` e `URL_PUBLICA_NA_WEB` na URL abaixo e acesse-a no seu navegador:
+
 ```bash
 https://api.telegram.org/botTOKEN_DO_SEU_BOT/setWebhook?url=URL_PUBLICA_NA_WEB/api/telegram/webhook
 ```
 
 Exemplo com ngrok:
+
 ```bash
 https://api.telegram.org/bot123456:ABC-DEF123456/setWebhook?url=https://abcdefg.ngrok-free.app/api/telegram/webhook
 ```
@@ -101,7 +111,9 @@ https://api.telegram.org/bot123456:ABC-DEF123456/setWebhook?url=https://abcdefg.
 Se a configuração for bem-sucedida, você verá uma resposta JSON do Telegram.
 
 ### 🤝 Contribuição
+
 Contribuições são sempre bem-vindas! Sinta-se à vontade para abrir uma issue ou enviar um _pull request_.
 
 ### 📄 Licença
+
 Este projeto está sob a licença [GPL-3.0](https://github.com/LeonardoAragaoDev/next-message-telegram-bot/blob/master/LICENSE).
