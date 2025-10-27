@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\BotConfig;
 use App\Models\Channel;
+use App\Models\User;
 use App\Models\UserState;
 use Telegram\Bot\Api;
 use Telegram\Bot\Keyboard\Keyboard;
@@ -12,24 +13,30 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ChannelController;
+use App\Http\Controllers\CommandController;
+use App\Http\Controllers\KeyboardController;
 
 class TelegramBotController extends Controller
 {
     protected Api $telegram;
+    protected CommandController $commandController;
+    protected UserController $userController;
+    protected ChannelController $channelController;
+
     protected string $storageChannelId;
     protected string $adminChannelId;
     protected string $adminChannelInviteLink;
-    protected UserController $userController;
-    protected ChannelController $channelController;
 
     /**
      * Construtor para injeção de dependências.
      */
-    public function __construct(Api $telegram, UserController $userController, ChannelController $channelController)
+    public function __construct(Api $telegram, CommandController $commandController, UserController $userController, ChannelController $channelController)
     {
         $this->telegram = $telegram;
+        $this->commandController = $commandController;
         $this->userController = $userController;
         $this->channelController = $channelController;
+
         // IDs e links de canais obtidos das variáveis de ambiente
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
         $this->adminChannelId = env('TELEGRAM_ADMIN_CHANNEL_ID') ?? '';
@@ -142,6 +149,36 @@ class TelegramBotController extends Controller
     }
 
     /**
+     * Delega comandos simples ao CommandController.
+     * Retorna true se um comando simples (não-fluxo) foi tratado, false caso contrário.
+     */
+    protected function delegateCommand(string $text, User $dbUser, $chatId): bool
+    {
+        $localUserId = $dbUser->id;
+        $command = str_replace('/', '', explode(' ', $text)[0]);
+
+        switch (strtolower($command)) {
+            case 'start':
+                $this->commandController->handleStartCommand($localUserId, $chatId, $dbUser);
+                return true;
+            case 'commands':
+                $this->commandController->handleCommandsCommand($chatId);
+                return true;
+            case 'status':
+                $this->commandController->handleStatusCommand($chatId);
+                return true;
+            case 'cancel':
+                $this->commandController->handleCancelCommand($localUserId, $chatId);
+                return true;
+            case 'configure':
+                // Deixa o /configure ser tratado pelo fluxo logo abaixo no handlePrivateChat
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /**
      * Gerencia a resposta aos botões inline (Etapa 3 do fluxo e comandos de callback).
      */
     protected function handleCallbackQuery(Update $update)
@@ -149,7 +186,6 @@ class TelegramBotController extends Controller
         $callbackQuery = $update->getCallbackQuery();
         $callbackData = $callbackQuery->getData();
         $chatId = $callbackQuery->getMessage()->getChat()->getId();
-        $messageId = $callbackQuery->getMessage()->getMessageId();
 
         // Resolve o usuário do DB (garantindo consistência com o handlePrivateChat)
         $dbUser = $this->resolveDbUserFromUpdate($update);
@@ -177,79 +213,19 @@ class TelegramBotController extends Controller
             $userState->data = null;
             $userState->save();
 
-            // Edita a mensagem original para remover os botões iniciais
-            $this->telegram->editMessageText([
-                'chat_id' => $chatId,
-                'message_id' => $messageId,
-                'text' => "✅ Configuração iniciada! Preparando a primeira etapa...",
-                'parse_mode' => 'Markdown',
-                'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
-            ]);
-
-            // Envia a mensagem da Etapa 1
-            $inlineKeyboard = Keyboard::inlineButton([
-                'inline_keyboard' => [
-                    [['text' => 'Cancelar', 'callback_data' => '/cancelar']],
-                ]
-            ]);
-
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
                 "text" => "🛠️ *Etapa 1:* Para configurar, *encaminhe uma mensagem recente* do canal que você deseja automatizar. O bot precisa ser Admin nesse canal.",
                 "parse_mode" => "Markdown",
-                "reply_markup" => $inlineKeyboard
+                "reply_markup" => KeyboardController::cancel()
             ]);
 
             return;
         }
 
-        // --- Lógica de Cancelamento (Comando /cancelar via botão inline) ---
-        if ($callbackData === '/cancelar') {
-            // Usa o ID local do DB para buscar o estado
-            $userState = UserState::where("user_id", $localUserId)->first();
-
-            if ($userState && $userState->state !== "idle") {
-                // Lógica de limpeza da mensagem temporária (no canal drive)
-                $messageIdToClean = null;
-                if ($userState->data) {
-                    $tempData = json_decode($userState->data, true);
-                    $messageIdToClean = $tempData["response_message_id"] ?? null;
-                }
-
-                if ($messageIdToClean) {
-                    try {
-                        $this->telegram->deleteMessage([
-                            'chat_id' => $this->storageChannelId,
-                            'message_id' => $messageIdToClean,
-                        ]);
-                        Log::info("Mensagem temporária ID: {$messageIdToClean} excluída do canal drive após cancelamento via callback.");
-                    } catch (\Exception $e) {
-                        Log::warning("Falha ao excluir mensagem temporária ({$messageIdToClean}) do canal drive durante o cancelamento via callback: " . $e->getMessage());
-                    }
-                }
-
-                // Limpa o estado
-                $userState->state = "idle";
-                $userState->data = null;
-                $userState->save();
-
-                // Edita a mensagem original para confirmar o cancelamento e remover botões
-                $this->telegram->editMessageText([
-                    'chat_id' => $chatId,
-                    'message_id' => $messageId,
-                    "text" => "❌ *Configuração cancelada.* Você pode iniciar uma nova configuração a qualquer momento com o comando /configure.",
-                    "parse_mode" => "Markdown",
-                ]);
-            } else {
-                // Edita a mensagem se não houver estado ativo
-                $this->telegram->editMessageText([
-                    'chat_id' => $chatId,
-                    'message_id' => $messageId,
-                    "text" => "❌ *Nenhuma configuração ativa para cancelar.*",
-                    "parse_mode" => "Markdown",
-                ]);
-            }
-            return;
+        // --- Lógica de Cancelamento (Comando /cancel via botão inline) ---
+        if ($callbackData === '/cancel') {
+            $this->commandController->handleCancelCommand($localUserId, $chatId);
         }
 
         // 2. Verifica se a callback é sobre o modo de resposta (Etapa 3)
@@ -259,12 +235,12 @@ class TelegramBotController extends Controller
             // Apenas permite se o estado for o esperado (awaiting_reply_mode)
             if (!$userState || $userState->state !== "awaiting_reply_mode") {
                 // Edita a mensagem para remover os botões e informar o erro
-                $this->telegram->editMessageText([
+                $this->telegram->sendMessage([
                     'chat_id' => $chatId,
-                    'message_id' => $messageId,
+                    // 'message_id' => $messageId,
                     'text' => "❌ Ação expirada ou inválida. Por favor, comece o fluxo com /configure.",
                     'parse_mode' => 'Markdown',
-                    'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
+                    'reply_markup' => Keyboard::remove()
                 ]);
                 return;
             }
@@ -314,12 +290,12 @@ class TelegramBotController extends Controller
             // Mensagem Final de Sucesso (Editando a mensagem original e removendo os botões)
             $replyModeText = $isReply ? "Resposta " : "Nova Mensagem";
 
-            $this->telegram->editMessageText([
+            $this->telegram->sendMessage([
                 'chat_id' => $chatId,
-                'message_id' => $messageId,
+                // 'message_id' => $messageId,
                 "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *{$replyModeText}*",
                 "parse_mode" => "Markdown",
-                'reply_markup' => Keyboard::inlineButton(['inline_keyboard' => []])
+                'reply_markup' => KeyboardController::startConfig()
             ]);
 
             return;
@@ -355,21 +331,7 @@ class TelegramBotController extends Controller
         }
 
         if ($text === "/start") {
-            $inlineKeyboard = Keyboard::inlineButton([
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'Entrar no Canal', 'url' => $this->adminChannelInviteLink],
-                        // ['text' => 'Iniciar Configuração', 'callback_data' => '/configure'],
-                    ],
-                ]
-            ]);
-
-            $this->telegram->sendMessage([
-                "chat_id" => $chatId,
-                "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancelar.\n\nPara usar o bot, você deve estar inscrito no nosso [canal oficial]({$this->adminChannelInviteLink}).",
-                "parse_mode" => "Markdown",
-                "reply_markup" => $inlineKeyboard,
-            ]);
+            $this->delegateCommand($text, $dbUser, $chatId);
             return;
         }
 
@@ -396,54 +358,18 @@ class TelegramBotController extends Controller
             }
         }
 
+        // Delega outros comandos simples (/commands, /status, /cancel)
+        if ($this->delegateCommand($text, $dbUser, $chatId)) {
+            return;
+        }
+
         // Busca ou cria o estado do usuário, usando o ID Local do DB.
         $userState = UserState::firstOrCreate(
             ["user_id" => $localUserId],
             ["state" => "idle", "data" => null]
         );
+
         Log::info("User state " . ($userState ? $userState->state : 'null'));
-
-        // --- Lógica para o Comando /cancelar (Prioridade) ---
-        if ($text === "/cancelar") {
-            if ($userState->state !== "idle") {
-                // Lógica de Limpeza de Mensagem Temporária ao cancelar
-                $messageIdToClean = null;
-                if ($userState->data) {
-                    $tempData = json_decode($userState->data, true);
-                    $messageIdToClean = $tempData["response_message_id"] ?? null;
-                }
-                if ($messageIdToClean) {
-                    try {
-                        $this->telegram->deleteMessage([
-                            'chat_id' => $this->storageChannelId,
-                            'message_id' => $messageIdToClean,
-                        ]);
-                        Log::info("Mensagem temporária ID: {$messageIdToClean} excluída do canal drive após cancelamento.");
-                    } catch (\Exception $e) {
-                        Log::warning("Falha ao excluir mensagem temporária ({$messageIdToClean}) do canal drive durante o cancelamento: " . $e->getMessage());
-                    }
-                }
-
-                // Limpa o estado
-                $userState->state = "idle";
-                $userState->data = null;
-                $userState->save();
-
-                $this->telegram->sendMessage([
-                    "chat_id" => $chatId,
-                    "text" => "❌ *Configuração cancelada.* Você pode iniciar uma nova configuração a qualquer momento com o comando /configure.",
-                    "parse_mode" => "Markdown",
-                ]);
-                return;
-            } else {
-                $this->telegram->sendMessage([
-                    "chat_id" => $chatId,
-                    "text" => "❌ *Nenhuma configuração ativa para cancelar.*",
-                    "parse_mode" => "Markdown",
-                ]);
-            }
-            return;
-        }
 
         // --- Lógica para o Comando /configure (Início do Fluxo) ---
         if ($text === "/configure") {
@@ -457,7 +383,7 @@ class TelegramBotController extends Controller
                     [
                         [
                             'text' => 'Cancelar',
-                            'callback_data' => '/cancelar' // O dado de callback é '/cancelar'
+                            'callback_data' => '/cancel' // O dado de callback é '/cancel'
                         ],
                     ],
                 ]
@@ -505,14 +431,15 @@ class TelegramBotController extends Controller
 
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado e permissões OK! \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**\n\n Para cancelar, digite /cancelar.",
+                    "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado e permissões OK! \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**",
                     "parse_mode" => "Markdown",
+                    "reply_markup" => KeyboardController::cancel()
                 ]);
                 return;
             } else {
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "❌ Mensagem inválida. Por favor, *encaminhe uma mensagem de um CANAL* para que eu possa identificar o ID. Para cancelar, digite /cancelar.",
+                    "text" => "❌ Mensagem inválida. Por favor, *encaminhe uma mensagem de um CANAL* para que eu possa identificar o ID. Para cancelar, digite /cancel.",
                     "parse_mode" => "Markdown",
                 ]);
                 return;
@@ -538,7 +465,7 @@ class TelegramBotController extends Controller
 
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "*❌ Erro ao salvar a mensagem.* Não consegui copiar a mensagem para o canal drive. O bot deve ser administrador do canal drive: `{$this->storageChannelId}`. Fluxo cancelado. Tente novamente com /configure.",
+                    "text" => "*❌ Erro ao salvar a mensagem.* Não consegui copiar a mensagem para o canal drive. O bot deve ser administrador do canal drive: `{$this->storageChannelId}`. Fluxo cancelado.",
                     "parse_mode" => "Markdown",
                 ]);
                 return;
@@ -564,7 +491,7 @@ class TelegramBotController extends Controller
                         ['text' => 'Enviar como Nova Mensagem', 'callback_data' => 'set_reply_mode_new'],
                     ],
                     [
-                        ['text' => 'Cancelar', 'callback_data' => '/cancelar'], // Botão de cancelamento
+                        ['text' => 'Cancelar', 'callback_data' => '/cancel'], // Botão de cancelamento
                     ]
                 ]
             ]);
@@ -572,7 +499,7 @@ class TelegramBotController extends Controller
             // Envia a pergunta com botões INLINE
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "✅ Mensagem salva com sucesso. \n\n*🛠️ Etapa 3:* Como o bot deve enviar a mensagem automática?\n\n Para cancelar, digite /cancelar.",
+                "text" => "✅ Mensagem salva com sucesso. \n\n*🛠️ Etapa 3:* Como o bot deve enviar a mensagem automática?\n\n Para cancelar, digite /cancel.",
                 "parse_mode" => "Markdown",
                 "reply_markup" => $inlineKeyboard, // Usa botões inline
             ]);
@@ -584,35 +511,35 @@ class TelegramBotController extends Controller
             // Se o usuário digitou texto em vez de clicar no botão inline, informa o erro.
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "❌ Opção inválida. Por favor, *clique em um dos botões* na mensagem acima para selecionar o modo de envio. Se quiser cancelar, digite /cancelar.",
+                "text" => "❌ Opção inválida. Por favor, *clique em um dos botões* na mensagem acima para selecionar o modo de envio. Se quiser cancelar, digite /cancel.",
                 "parse_mode" => "Markdown",
             ]);
             return;
         }
 
         // --- Lógica para Comandos Simples (Idle state) ---
-        elseif ($userState->state === "idle") {
-            if ($text === "/status") {
-                $this->telegram->sendMessage([
-                    "chat_id" => $chatId,
-                    "text" => "✅ *O Bot tá on!*",
-                    "parse_mode" => "Markdown",
-                ]);
-            } elseif ($text === "/commands") {
-                $this->telegram->sendMessage([
-                    "chat_id" => $chatId,
-                    "text" => "⚙️ Comandos\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n /cancelar - Cancelar qualquer fluxo de configuração ativo",
-                    "parse_mode" => "Markdown",
-                ]);
-            }
-            // Se a mensagem for texto simples e não for um comando, mas o bot está ocioso, apenas envia uma mensagem padrão.
-            else {
-                $this->telegram->sendMessage([
-                    "chat_id" => $chatId,
-                    "text" => "Comando não reconhecido. Use /configure para iniciar ou /commands para ver a lista.",
-                    "parse_mode" => "Markdown",
-                ]);
-            }
-        }
+        // elseif ($userState->state === "idle") {
+        //     if ($text === "/status") {
+        //         $this->telegram->sendMessage([
+        //             "chat_id" => $chatId,
+        //             "text" => "✅ *O Bot tá on!*",
+        //             "parse_mode" => "Markdown",
+        //         ]);
+        //     } elseif ($text === "/commands") {
+        //         $this->telegram->sendMessage([
+        //             "chat_id" => $chatId,
+        //             "text" => "⚙️ Comandos\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n /cancel - Cancelar qualquer fluxo de configuração ativo",
+        //             "parse_mode" => "Markdown",
+        //         ]);
+        //     }
+        //     // Se a mensagem for texto simples e não for um comando, mas o bot está ocioso, apenas envia uma mensagem padrão.
+        //     else {
+        //         $this->telegram->sendMessage([
+        //             "chat_id" => $chatId,
+        //             "text" => "Comando não reconhecido. Use /configure para iniciar ou /commands para ver a lista.",
+        //             "parse_mode" => "Markdown",
+        //         ]);
+        //     }
+        // }
     }
 }
