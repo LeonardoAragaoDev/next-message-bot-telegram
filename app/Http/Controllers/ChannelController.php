@@ -68,7 +68,7 @@ class ChannelController extends Controller
 
     /**
      * Cria ou atualiza um canal na base de dados com as informações do Telegram Chat.
-     * * @param TelegramChatObject $telegramChat
+     * @param TelegramChatObject $telegramChat
      * @return Channel
      */
     public function saveOrUpdateTelegramChannel(TelegramChatObject $telegramChat): Channel

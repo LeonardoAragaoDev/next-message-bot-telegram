@@ -6,23 +6,28 @@ use App\Models\BotConfig;
 use App\Models\Channel;
 use App\Models\User;
 use App\Models\UserState;
+use App\Services\KeyboardService;
+use App\Services\LogService;
+use Psr\Log\LogLevel;
 use Telegram\Bot\Api;
 use Telegram\Bot\Keyboard\Keyboard;
 use Telegram\Bot\Objects\Update;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ChannelController;
 use App\Http\Controllers\CommandController;
-use App\Http\Controllers\KeyboardController;
 
 class TelegramBotController extends Controller
 {
+    // Telegram API
     protected Api $telegram;
+
+    // Controllers
     protected CommandController $commandController;
     protected UserController $userController;
     protected ChannelController $channelController;
 
+    // Variáveis globais
     protected string $storageChannelId;
     protected string $adminChannelId;
     protected string $adminChannelInviteLink;
@@ -30,9 +35,16 @@ class TelegramBotController extends Controller
     /**
      * Construtor para injeção de dependências.
      */
-    public function __construct(Api $telegram, CommandController $commandController, UserController $userController, ChannelController $channelController)
-    {
+    public function __construct(
+        Api $telegram,
+        CommandController $commandController,
+        UserController $userController,
+        ChannelController $channelController,
+    ) {
+        // Telegram API
         $this->telegram = $telegram;
+
+        // Controllers
         $this->commandController = $commandController;
         $this->userController = $userController;
         $this->channelController = $channelController;
@@ -65,28 +77,21 @@ class TelegramBotController extends Controller
     {
         $user = null;
 
-        // 1. Prioriza o from do CallbackQuery (O USUÁRIO que clicou)
         if ($callbackQuery = $update->getCallbackQuery()) {
             $user = $callbackQuery->getFrom();
-        }
-        // 2. Em seguida, verifica o from da Message (O USUÁRIO que enviou a mensagem)
-        elseif ($message = $update->getMessage()) {
+        } elseif ($message = $update->getMessage()) {
             $user = $message->getFrom();
         }
-        // Se for outro tipo de atualização, $user será null
 
         if ($user) {
-            // Log para debug. O objeto $user AQUI é Telegram\Bot\Objects\User
-            Log::info("User info from update (ID): " . $user->getId());
+            // Logs de fluxo principal devem rodar em produção (devOnly = false)
+            LogService::inserir("User info from update (ID): " . $user->getId(), [], LogLevel::INFO, false);
 
-            // A checagem de bot é importante, mas o from de um CallbackQuery
-            // geralmente é o usuário humano (is_bot: false)
             if ($user->getIsBot()) {
-                Log::warning("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId());
+                LogService::inserir("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId(), [], LogLevel::WARNING, false);
                 return null;
             }
 
-            // $user é um Telegram\Bot\Objects\User, resolvendo o TypeError
             return $this->userController->saveOrUpdateTelegramUser($user);
         }
 
@@ -98,50 +103,48 @@ class TelegramBotController extends Controller
      */
     public function handleWebhook(Request $request)
     {
-        Log::info("--- NOVO WEBHOOK RECEBIDO ---");
-        Log::info("Corpo da requisição:", $request->all());
+        // Logs de início e corpo da requisição
+        LogService::inserir("--- NOVO WEBHOOK RECEBIDO ---", [], LogLevel::INFO, false);
+        // Logs verbosos como o corpo da requisição são mantidos dev-only (usando o default devOnly=true)
+        LogService::inserir("Corpo da requisição:", $request->all(), LogLevel::DEBUG, true);
 
         try {
             $update = $this->telegram->getWebhookUpdate();
 
-            // 0. Trata Callback Query (Botões Inline)
             if ($update->getCallbackQuery()) {
                 $this->handleCallbackQuery($update);
                 return response("OK", 200);
             }
 
-            // Verifica se a atualização tem uma mensagem/postagem que podemos processar
             $message = $this->getMessageFromUpdate($update);
 
             if (!$message) {
-                Log::info("handleWebhook: Atualização ignorada (sem mensagem/postagem processável).");
+                LogService::inserir("handleWebhook: Atualização ignorada (sem mensagem/postagem processável).", [], LogLevel::INFO, false);
                 return response("OK", 200);
             }
 
             $chatIdFromMessage = (string) $message->getChat()->getId();
 
-            // Para não receber webhooks do próprio canal de armazenamento
             if ($chatIdFromMessage != $this->storageChannelId) {
                 $chatType = $message->getChat()->getType();
-                Log::info("Tipo de Chat: {$chatType}");
+                LogService::inserir("Tipo de Chat: {$chatType}", [], LogLevel::INFO, false);
 
-                // 1. Chat Privado (Configuração)
                 if ($chatType === "private") {
                     $this->handlePrivateChat($update);
-                }
-
-                // 2. Canal (Disparo Automático)
-                elseif ($chatType === "channel") {
+                } elseif ($chatType === "channel") {
                     $this->channelController->handleChannelUpdate($update, $message);
                 }
             } else {
-                Log::info("handleWebhook: Atualização ignorada (veio do canal de armazenamento).");
+                LogService::inserir("handleWebhook: Atualização ignorada (veio do canal de armazenamento).", [], LogLevel::INFO, false);
             }
 
         } catch (\Exception $e) {
-            Log::error(
+            // Erro CRÍTICO deve ser logado em produção (devOnly = false)
+            LogService::inserir(
                 "ERRO CRÍTICO NO WEBHOOK: " . $e->getMessage(),
-                //['exception' => $e]
+                ['exception' => $e->getMessage()],
+                LogLevel::ERROR,
+                false
             );
         }
 
@@ -217,7 +220,7 @@ class TelegramBotController extends Controller
                 "chat_id" => $chatId,
                 "text" => "🛠️ *Etapa 1:* Para configurar, *encaminhe uma mensagem recente* do canal que você deseja automatizar. O bot precisa ser Admin nesse canal.",
                 "parse_mode" => "Markdown",
-                "reply_markup" => KeyboardController::cancel()
+                "reply_markup" => KeyboardService::cancel()
             ]);
 
             return;
@@ -237,7 +240,6 @@ class TelegramBotController extends Controller
                 // Edita a mensagem para remover os botões e informar o erro
                 $this->telegram->sendMessage([
                     'chat_id' => $chatId,
-                    // 'message_id' => $messageId,
                     'text' => "❌ Ação expirada ou inválida. Por favor, comece o fluxo com /configure.",
                     'parse_mode' => 'Markdown',
                     'reply_markup' => Keyboard::remove()
@@ -246,7 +248,6 @@ class TelegramBotController extends Controller
             }
 
             $tempData = json_decode($userState->data, true);
-
             $channelId = $tempData["channel_id"];
             $dbChannel = Channel::where('channel_id', $channelId)->first();
             $channelName = $dbChannel ? $dbChannel->title : "Canal Desconhecido";
@@ -265,9 +266,9 @@ class TelegramBotController extends Controller
                         'chat_id' => $this->storageChannelId,
                         'message_id' => $oldMessageId,
                     ]);
-                    Log::info("Mensagem anterior ID: {$oldMessageId} excluída do canal drive.");
+                    LogService::inserir("Mensagem anterior ID: {$oldMessageId} excluída do canal drive.", [], LogLevel::INFO, false);
                 } catch (\Exception $e) {
-                    Log::warning("Falha ao excluir mensagem antiga ({$oldMessageId}) do canal drive: " . $e->getMessage());
+                    LogService::inserir("Falha ao excluir mensagem antiga ({$oldMessageId}) do canal drive: " . $e->getMessage(), [], LogLevel::WARNING, false);
                 }
             }
             // --- Fim da Lógica de EXCLUSÃO ---
@@ -292,10 +293,9 @@ class TelegramBotController extends Controller
 
             $this->telegram->sendMessage([
                 'chat_id' => $chatId,
-                // 'message_id' => $messageId,
                 "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *{$replyModeText}*",
                 "parse_mode" => "Markdown",
-                'reply_markup' => KeyboardController::startConfig()
+                'reply_markup' => KeyboardService::startConfig()
             ]);
 
             return;
@@ -369,7 +369,7 @@ class TelegramBotController extends Controller
             ["state" => "idle", "data" => null]
         );
 
-        Log::info("User state " . ($userState ? $userState->state : 'null'));
+        LogService::inserir("User state " . ($userState ? $userState->state : 'null'), [], LogLevel::INFO, false);
 
         // --- Lógica para o Comando /configure (Início do Fluxo) ---
         if ($text === "/configure") {
@@ -433,13 +433,13 @@ class TelegramBotController extends Controller
                     "chat_id" => $chatId,
                     "text" => "✅ Canal *{$channelName}* (`{$forwardedChatId}`) registrado e permissões OK! \n\n🛠️ *Etapa 2:* Agora, *encaminhe a mensagem EXATA* (texto, foto, foto com texto, sticker, vídeo, etc.) que o bot deve enviar em resposta a cada nova publicação. **Encaminhe-a como recebida, sem edição.**",
                     "parse_mode" => "Markdown",
-                    "reply_markup" => KeyboardController::cancel()
+                    "reply_markup" => KeyboardService::cancel()
                 ]);
                 return;
             } else {
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
-                    "text" => "❌ Mensagem inválida. Por favor, *encaminhe uma mensagem de um CANAL* para que eu possa identificar o ID. Para cancelar, digite /cancel.",
+                    "text" => "❌ Mensagem inválida. Por favor, *encaminhe uma mensagem de um CANAL* para que eu possa identificar o ID.",
                     "parse_mode" => "Markdown",
                 ]);
                 return;
@@ -457,7 +457,7 @@ class TelegramBotController extends Controller
                 ]);
                 $responseMessageId = $copied->getMessageId();
             } catch (\Exception $e) {
-                Log::error('*❌ Erro ao salvar a mensagem.* Verifique se o bot é administrador do canal drive (' . $this->storageChannelId . '). Erro: ', ['exception' => $e->getMessage()]);
+                LogService::inserir('Erro ao salvar a mensagem no canal drive', ['exception' => $e->getMessage()]);
 
                 $userState->state = "idle"; // Limpa o estado
                 $userState->data = null;
@@ -518,28 +518,20 @@ class TelegramBotController extends Controller
         }
 
         // --- Lógica para Comandos Simples (Idle state) ---
-        // elseif ($userState->state === "idle") {
-        //     if ($text === "/status") {
-        //         $this->telegram->sendMessage([
-        //             "chat_id" => $chatId,
-        //             "text" => "✅ *O Bot tá on!*",
-        //             "parse_mode" => "Markdown",
-        //         ]);
-        //     } elseif ($text === "/commands") {
-        //         $this->telegram->sendMessage([
-        //             "chat_id" => $chatId,
-        //             "text" => "⚙️ Comandos\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n /cancel - Cancelar qualquer fluxo de configuração ativo",
-        //             "parse_mode" => "Markdown",
-        //         ]);
-        //     }
-        //     // Se a mensagem for texto simples e não for um comando, mas o bot está ocioso, apenas envia uma mensagem padrão.
-        //     else {
-        //         $this->telegram->sendMessage([
-        //             "chat_id" => $chatId,
-        //             "text" => "Comando não reconhecido. Use /configure para iniciar ou /commands para ver a lista.",
-        //             "parse_mode" => "Markdown",
-        //         ]);
-        //     }
-        // }
+        elseif ($userState->state === "idle") {
+            if ($text === "/status") {
+                $this->delegateCommand($text, $dbUser, $chatId);
+            } elseif ($text === "/commands") {
+                $this->delegateCommand($text, $dbUser, $chatId);
+            }
+            // Se a mensagem for texto simples e não for um comando, mas o bot está ocioso, apenas envia uma mensagem padrão.
+            else {
+                $this->telegram->sendMessage([
+                    "chat_id" => $chatId,
+                    "text" => "Comando não reconhecido. Use /configure para iniciar ou /commands para ver a lista.",
+                    "parse_mode" => "Markdown",
+                ]);
+            }
+        }
     }
 }
