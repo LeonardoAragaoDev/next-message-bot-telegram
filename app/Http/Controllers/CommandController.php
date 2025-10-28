@@ -4,21 +4,26 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\UserState;
+use App\Services\KeyboardService;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Api;
-use Telegram\Bot\Keyboard\Keyboard;
-use App\Http\Controllers\KeyboardController;
 
 class CommandController extends Controller
 {
 
+    // Telegram API
     protected Api $telegram;
+
+    // Variáveis globais
     protected string $storageChannelId;
     protected string $adminChannelInviteLink;
 
     public function __construct(Api $telegram)
     {
         $this->telegram = $telegram;
+
+        // Variáveis globais
+        $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
         $this->adminChannelId = env('TELEGRAM_ADMIN_CHANNEL_ID') ?? '';
         $this->adminChannelInviteLink = env('TELEGRAM_ADMIN_CHANNEL_INVITE_PRIVATE_LINK') ?? '';
     }
@@ -39,7 +44,7 @@ class CommandController extends Controller
             "chat_id" => $chatId,
             "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancel.\n\nPara usar o bot, você deve estar inscrito no nosso [Canal Oficial]({$this->adminChannelInviteLink}).",
             "parse_mode" => "Markdown",
-            "reply_markup" => KeyboardController::start(),
+            "reply_markup" => KeyboardService::start(),
         ]);
     }
 
@@ -55,7 +60,7 @@ class CommandController extends Controller
             "chat_id" => $chatId,
             "text" => "⚙️ *Comandos*\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n /cancel - Cancelar qualquer fluxo de configuração ativo",
             "parse_mode" => "Markdown",
-            "reply_markup" => KeyboardController::startConfig()
+            "reply_markup" => KeyboardService::startConfig()
         ]);
     }
 
@@ -70,7 +75,7 @@ class CommandController extends Controller
             "chat_id" => $chatId,
             "text" => "✅ *O Bot tá on!*",
             "parse_mode" => "Markdown",
-            "reply_markup" => KeyboardController::startConfigListCommand()
+            "reply_markup" => KeyboardService::startConfigListCommand()
         ]);
     }
 
@@ -116,7 +121,7 @@ class CommandController extends Controller
                 "chat_id" => $chatId,
                 "text" => $successMessage,
                 "parse_mode" => "Markdown",
-                "reply_markup" => KeyboardController::startConfig()
+                "reply_markup" => KeyboardService::startConfig()
             ]);
         } else {
             $noActiveMessage = "❌ *Nenhuma configuração ativa para cancelar.*";
@@ -125,7 +130,7 @@ class CommandController extends Controller
                 "chat_id" => $chatId,
                 "text" => $noActiveMessage,
                 "parse_mode" => "Markdown",
-                "reply_markup" => KeyboardController::startConfig()
+                "reply_markup" => KeyboardService::startConfig()
             ]);
         }
     }
@@ -142,7 +147,7 @@ class CommandController extends Controller
             "chat_id" => $chatId,
             "text" => "Comando não reconhecido. Use /configure para iniciar ou /commands para ver a lista.",
             "parse_mode" => "Markdown",
-            "reply_markup" => KeyboardController::startConfigListCommand()
+            "reply_markup" => KeyboardService::startConfigListCommand()
         ]);
     }
 }

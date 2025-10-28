@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Services;
 
-class KeyboardController extends Controller
+class KeyboardService
 {
     public static function start(): string
     {
