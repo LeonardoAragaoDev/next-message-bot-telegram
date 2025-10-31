@@ -29,6 +29,36 @@ class CommandController extends Controller
     }
 
     /**
+     * Delega comandos simples ao CommandController.
+     * Retorna true se um comando simples (não-fluxo) foi tratado, false caso contrário.
+     */
+    public function delegateCommand(string $text, User $dbUser, $chatId): bool
+    {
+        $localUserId = $dbUser->id;
+        $command = str_replace('/', '', explode(' ', $text)[0]);
+
+        switch (strtolower($command)) {
+            case 'start':
+                $this->handleStartCommand($localUserId, $chatId, $dbUser);
+                return true;
+            case 'commands':
+                $this->handleCommandsCommand($chatId);
+                return true;
+            case 'status':
+                $this->handleStatusCommand($chatId);
+                return true;
+            case 'cancel':
+                $this->handleCancelCommand($localUserId, $chatId);
+                return true;
+            case 'configure':
+                // Deixa o /configure ser tratado pelo fluxo logo abaixo no handlePrivateChat
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /**
      * Executa a lógica do comando /start.
      * Envia uma mensagem de boas-vindas e instruções básicas, incluindo o teclado inline.
      *

@@ -7,6 +7,7 @@ use App\Models\Channel;
 use App\Models\User;
 use App\Models\UserState;
 use App\Services\KeyboardService;
+use App\Utils\Utils;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LogLevel;
 use Telegram\Bot\Api;
@@ -56,49 +57,6 @@ class TelegramBotController extends Controller
     }
 
     /**
-     * Extrai o objeto Message ou ChannelPost da atualização.
-     */
-    private function getMessageFromUpdate(Update $update)
-    {
-        if ($update->getMessage()) {
-            return $update->getMessage();
-        }
-        if ($update->getChannelPost()) {
-            return $update->getChannelPost();
-        }
-        return null;
-    }
-
-    /**
-     * Resolve o usuário do banco de dados a partir do Update,
-     * garantindo que o objeto retornado seja Telegram\Bot\Objects\User.
-     */
-    private function resolveDbUserFromUpdate(Update $update)
-    {
-        $user = null;
-
-        if ($callbackQuery = $update->getCallbackQuery()) {
-            $user = $callbackQuery->getFrom();
-        } elseif ($message = $update->getMessage()) {
-            $user = $message->getFrom();
-        }
-
-        if ($user) {
-            // Logs de fluxo principal devem rodar em produção (devOnly = false)
-            Log::info("User info from update (ID): " . $user->getId());
-
-            if ($user->getIsBot()) {
-                Log::warning("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId());
-                return null;
-            }
-
-            return $this->userController->saveOrUpdateTelegramUser($user);
-        }
-
-        return null;
-    }
-
-    /**
      * Ponto de entrada do Webhook. Direciona a atualização e trata exceções.
      */
     public function handleWebhook(Request $request)
@@ -116,7 +74,7 @@ class TelegramBotController extends Controller
                 return response("OK", 200);
             }
 
-            $message = $this->getMessageFromUpdate($update);
+            $message = Utils::getMessageFromUpdate($update);
 
             if (!$message) {
                 Log::warning("handleWebhook: Atualização ignorada (sem mensagem/postagem processável).");
@@ -150,36 +108,6 @@ class TelegramBotController extends Controller
     }
 
     /**
-     * Delega comandos simples ao CommandController.
-     * Retorna true se um comando simples (não-fluxo) foi tratado, false caso contrário.
-     */
-    protected function delegateCommand(string $text, User $dbUser, $chatId): bool
-    {
-        $localUserId = $dbUser->id;
-        $command = str_replace('/', '', explode(' ', $text)[0]);
-
-        switch (strtolower($command)) {
-            case 'start':
-                $this->commandController->handleStartCommand($localUserId, $chatId, $dbUser);
-                return true;
-            case 'commands':
-                $this->commandController->handleCommandsCommand($chatId);
-                return true;
-            case 'status':
-                $this->commandController->handleStatusCommand($chatId);
-                return true;
-            case 'cancel':
-                $this->commandController->handleCancelCommand($localUserId, $chatId);
-                return true;
-            case 'configure':
-                // Deixa o /configure ser tratado pelo fluxo logo abaixo no handlePrivateChat
-                return false;
-            default:
-                return false;
-        }
-    }
-
-    /**
      * Gerencia a resposta aos botões inline (Etapa 3 do fluxo e comandos de callback).
      */
     protected function handleCallbackQuery(Update $update)
@@ -189,7 +117,7 @@ class TelegramBotController extends Controller
         $chatId = $callbackQuery->getMessage()->getChat()->getId();
 
         // Resolve o usuário do DB (garantindo consistência com o handlePrivateChat)
-        $dbUser = $this->resolveDbUserFromUpdate($update);
+        $dbUser = Utils::resolveDbUserFromUpdate($update);
         if (!$dbUser) {
             return; // Ignora se não conseguir identificar o usuário
         }
@@ -304,7 +232,7 @@ class TelegramBotController extends Controller
         }
 
         if ($text === "/start") {
-            $this->delegateCommand($text, $dbUser, $chatId);
+            $this->commandController->delegateCommand($text, $dbUser, $chatId);
             return;
         }
 
@@ -332,7 +260,7 @@ class TelegramBotController extends Controller
         }
 
         // Delega outros comandos simples (/commands, /status, /cancel)
-        if ($this->delegateCommand($text, $dbUser, $chatId)) {
+        if ($this->commandController->delegateCommand($text, $dbUser, $chatId)) {
             return;
         }
 
@@ -556,9 +484,9 @@ class TelegramBotController extends Controller
         // --- Lógica para Comandos Simples (Idle state) ---
         elseif ($userState->state === "idle") {
             if ($text === "/status") {
-                $this->delegateCommand($text, $dbUser, $chatId);
+                $this->commandController->delegateCommand($text, $dbUser, $chatId);
             } elseif ($text === "/commands") {
-                $this->delegateCommand($text, $dbUser, $chatId);
+                $this->commandController->delegateCommand($text, $dbUser, $chatId);
             }
             // Se a mensagem for texto simples e não for um comando, mas o bot está ocioso, apenas envia uma mensagem padrão.
             else {
