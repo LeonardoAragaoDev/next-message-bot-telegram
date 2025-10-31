@@ -132,8 +132,9 @@ class TelegramBotController extends Controller
 
         $isSubscribed = $this->channelController->isUserAdminChannelMember($this->adminChannelId, $telegramUserId, $localUserId, $chatId);
         $returnCommand = $this->commandController->delegateCommand($callbackData, $dbUser, $chatId);
+        $hasMaxChannelsConfigured = $this->userController->hasMaxChannelsConfigured($localUserId, $chatId);
 
-        if (!$isSubscribed || $returnCommand) {
+        if (!$isSubscribed || $returnCommand || $hasMaxChannelsConfigured) {
             return;
         }
 

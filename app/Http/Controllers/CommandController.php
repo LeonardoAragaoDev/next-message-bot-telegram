@@ -73,7 +73,7 @@ class CommandController extends Controller
 
         $this->telegram->sendMessage([
             "chat_id" => $chatId,
-            "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancel.\n\nPara usar o bot, você deve estar inscrito no nosso [Canal Oficial]({$this->adminChannelInviteLink}).",
+            "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal *(o máximo de canais permitidos para se configurar no momento é " . UserController::MAX_CHANNELS . ")*.\n\nPara conferir todos os comandos digite /commands\n\nE caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancel.\n\n*Para usar o bot, você deve estar inscrito no nosso* [Canal Oficial]({$this->adminChannelInviteLink}).",
             "parse_mode" => "Markdown",
             "reply_markup" => KeyboardService::start(),
         ]);

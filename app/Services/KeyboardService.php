@@ -14,6 +14,9 @@ class KeyboardService
                 [
                     ['text' => 'Iniciar Configuração', 'callback_data' => '/configure'],
                 ],
+                [
+                    ['text' => 'Listar Comandos', 'callback_data' => '/commands'],
+                ],
             ]
         ]);
     }
