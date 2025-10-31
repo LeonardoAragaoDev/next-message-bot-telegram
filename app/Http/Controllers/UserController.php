@@ -66,18 +66,24 @@ class UserController extends Controller
      */
     public function hasMaxChannelsConfigured(int $localUserId, int $chatId): bool
     {
+        $retorno = false;
         // Conta quantas configurações existem para este user_id
         $count = BotConfig::where('user_id', $localUserId)->count();
+        if ($count >= self::MAX_CHANNELS) {
+            $retorno = true;
+        }
 
         Log::debug("Contagem de canais configurados para o usuário {$localUserId}: {$count}");
 
-        $this->telegram->sendMessage([
-            "chat_id" => $chatId,
-            "text" => "🔒 *Máximo de canais configurados!* \n\nNo momento o máximo de canais que você pode configurar é *" . self::MAX_CHANNELS . "*.",
-            "parse_mode" => "Markdown",
-            "disable_web_page_preview" => true,
-        ]);
+        if ($retorno) {
+            $this->telegram->sendMessage([
+                'chat_id' => $chatId,
+                'text' => "🔒 *Máximo de canais configurados!* \n\nNo momento o máximo de canais que você pode configurar é *" . self::MAX_CHANNELS . "*.",
+                'parse_mode' => 'Markdown',
+                'disable_web_page_preview' => true,
+            ]);
+        }
 
-        return $count >= self::MAX_CHANNELS;
+        return $retorno;
     }
 }
