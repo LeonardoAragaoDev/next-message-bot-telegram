@@ -37,10 +37,13 @@ class KeyboardService
     {
         return json_encode([
             'inline_keyboard' => [
-                [['text' => 'Cancelar', 'callback_data' => '/cancel']],
+                [
+                    ['text' => 'Cancelar', 'callback_data' => '/cancel']
+                ],
             ]
         ]);
     }
+
     public static function startConfigListCommand(): string
     {
         return json_encode([

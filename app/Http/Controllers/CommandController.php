@@ -20,6 +20,7 @@ class CommandController extends Controller
 
     public function __construct(Api $telegram)
     {
+        // Telegram API
         $this->telegram = $telegram;
 
         // Variáveis globais
