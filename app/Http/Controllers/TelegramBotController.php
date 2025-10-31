@@ -7,7 +7,7 @@ use App\Models\Channel;
 use App\Models\User;
 use App\Models\UserState;
 use App\Services\KeyboardService;
-use App\Services\LogService;
+use Illuminate\Support\Facades\Log;
 use Psr\Log\LogLevel;
 use Telegram\Bot\Api;
 use Telegram\Bot\Keyboard\Keyboard;
@@ -85,10 +85,10 @@ class TelegramBotController extends Controller
 
         if ($user) {
             // Logs de fluxo principal devem rodar em produção (devOnly = false)
-            LogService::inserir("User info from update (ID): " . $user->getId(), [], LogLevel::INFO, false);
+            Log::info("User info from update (ID): " . $user->getId());
 
             if ($user->getIsBot()) {
-                LogService::inserir("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId(), [], LogLevel::WARNING, false);
+                Log::warning("resolveDbUserFromUpdate: Ignorando usuário bot ID: " . $user->getId());
                 return null;
             }
 
@@ -104,9 +104,9 @@ class TelegramBotController extends Controller
     public function handleWebhook(Request $request)
     {
         // Logs de início e corpo da requisição
-        LogService::inserir("--- NOVO WEBHOOK RECEBIDO ---", [], LogLevel::INFO, false);
+        Log::info("--- NOVO WEBHOOK RECEBIDO ---");
         // Logs verbosos como o corpo da requisição são mantidos dev-only (usando o default devOnly=true)
-        LogService::inserir("Corpo da requisição:", $request->all(), LogLevel::DEBUG, true);
+        Log::debug("Corpo da requisição:", $request->all());
 
         try {
             $update = $this->telegram->getWebhookUpdate();
@@ -119,7 +119,7 @@ class TelegramBotController extends Controller
             $message = $this->getMessageFromUpdate($update);
 
             if (!$message) {
-                LogService::inserir("handleWebhook: Atualização ignorada (sem mensagem/postagem processável).", [], LogLevel::INFO, false);
+                Log::warning("handleWebhook: Atualização ignorada (sem mensagem/postagem processável).");
                 return response("OK", 200);
             }
 
@@ -127,7 +127,7 @@ class TelegramBotController extends Controller
 
             if ($chatIdFromMessage != $this->storageChannelId) {
                 $chatType = $message->getChat()->getType();
-                LogService::inserir("Tipo de Chat: {$chatType}", [], LogLevel::INFO, false);
+                Log::info("Tipo de Chat: {$chatType}");
 
                 if ($chatType === "private") {
                     $this->handlePrivateChat($update);
@@ -135,16 +135,14 @@ class TelegramBotController extends Controller
                     $this->channelController->handleChannelUpdate($update, $message);
                 }
             } else {
-                LogService::inserir("handleWebhook: Atualização ignorada (veio do canal de armazenamento).", [], LogLevel::INFO, false);
+                Log::warning("handleWebhook: Atualização ignorada (veio do canal de armazenamento).");
             }
 
         } catch (\Exception $e) {
             // Erro CRÍTICO deve ser logado em produção (devOnly = false)
-            LogService::inserir(
+            Log::error(
                 "ERRO CRÍTICO NO WEBHOOK: " . $e->getMessage(),
-                ['exception' => $e->getMessage()],
-                LogLevel::ERROR,
-                false
+                ['exception' => $e->getMessage()]
             );
         }
 
@@ -251,51 +249,26 @@ class TelegramBotController extends Controller
             $channelId = $tempData["channel_id"];
             $dbChannel = Channel::where('channel_id', $channelId)->first();
             $channelName = $dbChannel ? $dbChannel->title : "Canal Desconhecido";
-            $responseMessageId = $tempData["response_message_id"];
 
             // Determina a preferência baseada no callback data
             $mode = str_replace('set_reply_mode_', '', $callbackData);
             $isReply = ($mode === 'reply');
 
-            // --- Lógica de EXCLUSÃO DA MENSAGEM ANTERIOR (Configuração Antiga) ---
-            $oldConfig = BotConfig::where("channel_id", $channelId)->first();
-            if ($oldConfig && $oldConfig->response_message_id) {
-                $oldMessageId = $oldConfig->response_message_id;
-                try {
-                    $this->telegram->deleteMessage([
-                        'chat_id' => $this->storageChannelId,
-                        'message_id' => $oldMessageId,
-                    ]);
-                    LogService::inserir("Mensagem anterior ID: {$oldMessageId} excluída do canal drive.", [], LogLevel::INFO, false);
-                } catch (\Exception $e) {
-                    LogService::inserir("Falha ao excluir mensagem antiga ({$oldMessageId}) do canal drive: " . $e->getMessage(), [], LogLevel::WARNING, false);
-                }
-            }
-            // --- Fim da Lógica de EXCLUSÃO ---
+            // Salva o modo de resposta nos dados temporários
+            $tempData["is_reply"] = $isReply;
 
-            // Salva a configuração FINAL no BotConfig
-            BotConfig::updateOrCreate(
-                ["channel_id" => $channelId],
-                [
-                    "user_id" => $localUserId, // ID Local do DB
-                    "response_message_id" => $responseMessageId,
-                    "is_reply" => $isReply,
-                ]
-            );
-
-            // Limpa o estado
-            $userState->state = "idle";
-            $userState->data = null;
+            // Transição de estado para a nova Etapa 4
+            $userState->state = "awaiting_message_frequency"; // <--- NOVO ESTADO
+            $userState->data = json_encode($tempData);
             $userState->save();
 
-            // Mensagem Final de Sucesso (Editando a mensagem original e removendo os botões)
-            $replyModeText = $isReply ? "Resposta " : "Nova Mensagem";
-
+            // Envia a Etapa 4 (Solicitar a Frequência)
             $this->telegram->sendMessage([
-                'chat_id' => $chatId,
-                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *{$replyModeText}*",
+                "chat_id" => $chatId,
+                // EDITADO: Novo texto para a Etapa 4
+                "text" => "✅ Modo de envio salvo para o canal *{$channelName}* (`{$channelId}`). \n\n*🛠️ Etapa 4 (Final):* Digite o número de mensagens recebidas no seu canal após o qual o bot deve enviar a resposta automática. \n\n*Ex:* Digite `1` para enviar em *TODA* mensagem, `5` para enviar a cada *5ª* mensagem, etc. \n\n*O padrão será 1 se você não configurar.*",
                 "parse_mode" => "Markdown",
-                'reply_markup' => KeyboardService::startConfig()
+                "reply_markup" => KeyboardService::cancel()
             ]);
 
             return;
@@ -369,7 +342,7 @@ class TelegramBotController extends Controller
             ["state" => "idle", "data" => null]
         );
 
-        LogService::inserir("User state " . ($userState ? $userState->state : 'null'), [], LogLevel::INFO, false);
+        Log::info("User state " . ($userState ? $userState->state : 'null'));
 
         // --- Lógica para o Comando /configure (Início do Fluxo) ---
         if ($text === "/configure") {
@@ -395,7 +368,6 @@ class TelegramBotController extends Controller
                 "parse_mode" => "Markdown",
                 "reply_markup" => $inlineKeyboard
             ]);
-            return;
         }
 
         // --- Lógica de Fluxo (Etapa 1: Aguardando Mensagem do Canal) ---
@@ -435,14 +407,12 @@ class TelegramBotController extends Controller
                     "parse_mode" => "Markdown",
                     "reply_markup" => KeyboardService::cancel()
                 ]);
-                return;
             } else {
                 $this->telegram->sendMessage([
                     "chat_id" => $chatId,
                     "text" => "❌ Mensagem inválida. Por favor, *encaminhe uma mensagem de um CANAL* para que eu possa identificar o ID.",
                     "parse_mode" => "Markdown",
                 ]);
-                return;
             }
         }
 
@@ -457,7 +427,7 @@ class TelegramBotController extends Controller
                 ]);
                 $responseMessageId = $copied->getMessageId();
             } catch (\Exception $e) {
-                LogService::inserir('Erro ao salvar a mensagem no canal drive', ['exception' => $e->getMessage()]);
+                Log::error('Erro ao salvar a mensagem no canal drive', ['exception' => $e->getMessage()]);
 
                 $userState->state = "idle"; // Limpa o estado
                 $userState->data = null;
@@ -491,7 +461,7 @@ class TelegramBotController extends Controller
                         ['text' => 'Enviar como Nova Mensagem', 'callback_data' => 'set_reply_mode_new'],
                     ],
                     [
-                        ['text' => 'Cancelar', 'callback_data' => '/cancel'], // Botão de cancelamento
+                        ['text' => 'Cancelar', 'callback_data' => '/cancel'],
                     ]
                 ]
             ]);
@@ -499,11 +469,10 @@ class TelegramBotController extends Controller
             // Envia a pergunta com botões INLINE
             $this->telegram->sendMessage([
                 "chat_id" => $chatId,
-                "text" => "✅ Mensagem salva com sucesso. \n\n*🛠️ Etapa 3:* Como o bot deve enviar a mensagem automática?\n\n Para cancelar, digite /cancel.",
+                "text" => "✅ Mensagem salva com sucesso para o canal. \n\n*🛠️ Etapa 3:* Como o bot deve enviar a mensagem automática?",
                 "parse_mode" => "Markdown",
-                "reply_markup" => $inlineKeyboard, // Usa botões inline
+                "reply_markup" => $inlineKeyboard,
             ]);
-            return;
         }
 
         // --- Lógica de Fluxo (Etapa 3: Aguardando Modo de Resposta) ---
@@ -514,7 +483,74 @@ class TelegramBotController extends Controller
                 "text" => "❌ Opção inválida. Por favor, *clique em um dos botões* na mensagem acima para selecionar o modo de envio. Se quiser cancelar, digite /cancel.",
                 "parse_mode" => "Markdown",
             ]);
-            return;
+        }
+
+        // --- Lógica de Fluxo (Etapa 4: Aguardando Frequência de Mensagem) ---
+        elseif ($userState->state === "awaiting_message_frequency") {
+            $frequency = intval($message->getText());
+
+            if ($frequency <= 0) {
+                $this->telegram->sendMessage([
+                    "chat_id" => $chatId,
+                    "text" => "❌ Número inválido. Por favor, digite um número inteiro maior ou igual a 1 (Ex: 1, 5, 10).",
+                    "parse_mode" => "Markdown",
+                ]);
+                return;
+            }
+
+            $tempData = json_decode($userState->data, true);
+            $channelId = $tempData["channel_id"];
+            $responseMessageId = $tempData["response_message_id"];
+            $isReply = $tempData["is_reply"];
+
+            $dbChannel = Channel::where('channel_id', $channelId)->first();
+            $channelName = $dbChannel ? $dbChannel->title : "Canal Desconhecido";
+
+            // --- Lógica de EXCLUSÃO DA MENSAGEM ANTERIOR (Configuração Antiga) ---
+            $oldConfig = BotConfig::where("channel_id", $channelId)->first();
+            if ($oldConfig && $oldConfig->response_message_id) {
+                $oldMessageId = $oldConfig->response_message_id;
+                try {
+                    $this->telegram->deleteMessage([
+                        'chat_id' => $this->storageChannelId,
+                        'message_id' => $oldMessageId,
+                    ]);
+                    // Importante: A constante LogLevel deve ser importada ou definida
+                    Log::info("Mensagem anterior ID: {$oldMessageId} excluída do canal drive.", [], \Psr\Log\LogLevel::INFO, false);
+                } catch (\Exception $e) {
+                    Log::error("Falha ao excluir mensagem antiga ({$oldMessageId}) do canal drive: " . $e->getMessage(), [], \Psr\Log\LogLevel::WARNING, false);
+                }
+            }
+            // --- Fim da Lógica de EXCLUSÃO ---
+
+            // Salva a configuração FINAL no BotConfig
+            BotConfig::updateOrCreate(
+                ["channel_id" => $channelId],
+                [
+                    "user_id" => $localUserId, // ID Local do DB
+                    "response_message_id" => $responseMessageId,
+                    "is_reply" => $isReply,
+                    "send_every_x_messages" => $frequency, // <--- NOVO CAMPO SALVO
+                    "messages_received_count" => 0, // Zera o contador no início da configuração
+                ]
+            );
+
+            // Limpa o estado
+            $userState->state = "idle";
+            $userState->data = null;
+            $userState->save();
+
+            // Mensagem Final de Sucesso
+            $replyModeText = $isReply ? "Resposta" : "Nova Mensagem";
+            $frequencyText = $frequency == 1 ? "TODA mensagem" : "a cada *{$frequency}* mensagens";
+
+            $this->telegram->sendMessage([
+                'chat_id' => $chatId,
+                // EDITADO: Mensagem final de sucesso
+                "text" => "🎉 *Configuração Concluída!* O bot está ativo no canal *{$channelName}* (`{$channelId}`).\n\n ✅ Modo de Envio: *{$replyModeText}*\n ⏱️ Frequência: *{$frequencyText}*",
+                "parse_mode" => "Markdown",
+                'reply_markup' => KeyboardService::startConfig()
+            ]);
         }
 
         // --- Lógica para Comandos Simples (Idle state) ---
