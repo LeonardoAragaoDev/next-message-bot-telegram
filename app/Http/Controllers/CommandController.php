@@ -89,7 +89,7 @@ class CommandController extends Controller
     {
         $this->telegram->sendMessage([
             "chat_id" => $chatId,
-            "text" => "⚙️ *Comandos*\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n /cancel - Cancelar qualquer fluxo de configuração ativo",
+            "text" => "⚙️ *Comandos*\n\n /start - Iniciar o bot\n /configure - Configurar o bot para um canal\n /status - Verificar status do bot\n \commands - Lista os comandos\n /cancel - Cancelar qualquer fluxo de configuração ativo",
             "parse_mode" => "Markdown",
             "reply_markup" => KeyboardService::startConfig()
         ]);
