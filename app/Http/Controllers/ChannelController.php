@@ -14,11 +14,13 @@ class ChannelController extends Controller
 {
     protected Api $telegram;
     protected string $storageChannelId;
+    protected string $adminChannelInviteLink;
 
     public function __construct(Api $telegram)
     {
         $this->telegram = $telegram;
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
+        $this->adminChannelInviteLink = env('TELEGRAM_ADMIN_CHANNEL_INVITE_PRIVATE_LINK') ?? '';
     }
 
     /**

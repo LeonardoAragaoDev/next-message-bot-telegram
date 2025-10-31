@@ -66,8 +66,9 @@ class TelegramBotController extends Controller
 
         try {
             $update = $this->telegram->getWebhookUpdate();
+            $isCallbackQuery = $update->getCallbackQuery();
 
-            if ($update->getCallbackQuery()) {
+            if ($isCallbackQuery) {
                 $this->handleCallbackQuery($update);
                 return response("OK", 200);
             }
@@ -120,6 +121,7 @@ class TelegramBotController extends Controller
             return; // Ignora se não conseguir identificar o usuário
         }
         $localUserId = $dbUser->id;
+        $telegramUserId = $dbUser->telegram_user_id;
 
         // 1. Envia uma notificação temporária para o usuário
         $this->telegram->answerCallbackQuery([
@@ -128,7 +130,7 @@ class TelegramBotController extends Controller
             'show_alert' => false
         ]);
 
-        $isSubscribed = $this->channelController->isUserAdminChannelMember($this->adminChannelId, $dbUser->telegram_user_id, $localUserId, $chatId);
+        $isSubscribed = $this->channelController->isUserAdminChannelMember($this->adminChannelId, $telegramUserId, $localUserId, $chatId);
         $returnCommand = $this->commandController->delegateCommand($callbackData, $dbUser, $chatId);
 
         if (!$isSubscribed || $returnCommand) {
