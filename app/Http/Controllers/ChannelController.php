@@ -29,34 +29,49 @@ class ChannelController extends Controller
         $messageId = $message->getMessageId();
 
         Log::info("handleChannelUpdate: Processando atualização do canal ID: {$channelId}");
-
         $effectiveType = $message->getEffectiveType();
         if (!in_array($effectiveType, ['service', 'new_chat_members', 'left_chat_member', 'channel_chat_created' /* etc. */])) {
 
             Log::info("handleChannelUpdate: Tipo de conteúdo suportado detectado. Buscando configuração...");
-
             $config = BotConfig::where("channel_id", $channelId)->first();
 
             if ($config && $config->response_message_id) {
-                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Disparando resposta (Copy).");
+                Log::info("handleChannelUpdate: Configuração ENCONTRADA para o canal {$channelId}. Verificando frequência de envio...");
+                // 1. Incrementa o contador de mensagens recebidas
+                $config->messages_received_count++;
 
-                $params = [
-                    'chat_id' => $channelId,
-                    'from_chat_id' => $this->storageChannelId,
-                    'message_id' => $config->response_message_id,
-                    'disable_notification' => false,
-                ];
+                // 2. Verifica se é hora de enviar a mensagem
+                if ($config->messages_received_count >= $config->send_every_x_messages) {
 
-                if ($config->is_reply) {
-                    $params["disable_notification"] = true;
-                    $params["reply_to_message_id"] = $messageId;
+                    Log::info("handleChannelUpdate: Frequência atingida ({$config->messages_received_count} de {$config->send_every_x_messages}). Disparando resposta (Copy) e zerando contador.");
+                    $params = [
+                        'chat_id' => $channelId,
+                        'from_chat_id' => $this->storageChannelId,
+                        'message_id' => $config->response_message_id,
+                        'disable_notification' => false,
+                    ];
+
+                    if ($config->is_reply) {
+                        $params["disable_notification"] = true;
+                        $params["reply_to_message_id"] = $messageId;
+                    }
+
+                    try {
+                        $this->telegram->copyMessage($params);
+
+                        // Zera o contador APÓS o envio bem-sucedido
+                        $config->messages_received_count = 0;
+
+                    } catch (\Exception $e) {
+                        Log::error("ERRO ao disparar copyMessage no canal {$channelId}: " . $e->getMessage());
+                        // Em caso de erro, o contador não é zerado. Ele tentará novamente na próxima mensagem.
+                    }
+                } else {
+                    Log::info("handleChannelUpdate: Frequência não atingida ({$config->messages_received_count} de {$config->send_every_x_messages}). Apenas atualizando contador.");
                 }
 
-                try {
-                    $this->telegram->copyMessage($params);
-                } catch (\Exception $e) {
-                    Log::error("ERRO ao disparar copyMessage no canal {$channelId}: " . $e->getMessage());
-                }
+                // 3. Salva o contador atualizado (se foi zerado ou incrementado)
+                $config->save();
 
             } else {
                 Log::warning("handleChannelUpdate: Configuração NÃO ENCONTRADA ou response_message_id ausente para o canal ID: {$channelId}.");
@@ -89,7 +104,6 @@ class ChannelController extends Controller
         );
 
         Log::info("Canal Telegram ID: {$channelId} salvo/atualizado.");
-
         return $channel;
     }
 
@@ -156,7 +170,6 @@ class ChannelController extends Controller
                 "user_id" => $userId,
             ]);
             Log::info("Verificação de membro do canal admin para usuário {$userId} no canal {$adminChannelId}: Status - " . $chatMember->get("status"));
-
             $status = $chatMember->get("status");
 
             // O usuário é membro se o status for "member", "administrator" ou "creator".
@@ -165,7 +178,7 @@ class ChannelController extends Controller
         } catch (\Exception $e) {
             // Isso pode falhar se o bot não estiver no canal admin ou se o ID for inválido.
             // O tratamento padrão é negar o acesso ou logar e retornar false.
-            Log::warning("Falha ao verificar a inscrição do usuário {$userId} no canal admin {$adminChannelId}: " . $e->getMessage());
+            Log::error("Falha ao verificar a inscrição do usuário {$userId} no canal admin {$adminChannelId}: " . $e->getMessage());
             // Em caso de falha na API, o mais seguro é impedir o uso.
             return false;
         }

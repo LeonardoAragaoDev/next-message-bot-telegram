@@ -14,6 +14,8 @@ class BotConfig extends Model
         'user_id',
         'response_message_id',
         'is_reply',
+        'send_every_x_messages',
+        'messages_received_count',
     ];
 
 }
