@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\BotConfig;
 use App\Models\Channel;
+use App\Models\UserState;
 use Telegram\Bot\Api;
 use Telegram\Bot\Objects\Chat as TelegramChatObject;
 use Illuminate\Support\Facades\Log;
@@ -13,11 +14,13 @@ class ChannelController extends Controller
 {
     protected Api $telegram;
     protected string $storageChannelId;
+    protected string $adminChannelInviteLink;
 
     public function __construct(Api $telegram)
     {
         $this->telegram = $telegram;
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
+        $this->adminChannelInviteLink = env('TELEGRAM_ADMIN_CHANNEL_INVITE_PRIVATE_LINK') ?? '';
     }
 
     /**
@@ -156,11 +159,13 @@ class ChannelController extends Controller
      * @param int $userId O ID do Telegram do usuário.
      * @return bool
      */
-    public function isUserAdminChannelMember(string $adminChannelId, int $userId): bool
+    public function isUserAdminChannelMember(string $adminChannelId, int $userId, int $localUserId, int $chatId): bool
     {
+        $retorno = false;
+
         // Se o ID do canal admin não estiver configurado, assume-se que a verificação não é necessária.
         if (empty($adminChannelId)) {
-            return true;
+            $retorno = false;
         }
 
         try {
@@ -173,14 +178,33 @@ class ChannelController extends Controller
             $status = $chatMember->get("status");
 
             // O usuário é membro se o status for "member", "administrator" ou "creator".
-            return in_array($status, ["member", "administrator", "creator"]);
+            $retorno = in_array($status, ["member", "administrator", "creator"]);
 
         } catch (\Exception $e) {
             // Isso pode falhar se o bot não estiver no canal admin ou se o ID for inválido.
             // O tratamento padrão é negar o acesso ou logar e retornar false.
             Log::error("Falha ao verificar a inscrição do usuário {$userId} no canal admin {$adminChannelId}: " . $e->getMessage());
             // Em caso de falha na API, o mais seguro é impedir o uso.
-            return false;
+            $retorno = false;
         }
+
+        if (!$retorno) {
+            // Limpa o estado ativo, se houver
+            $userState = UserState::where("user_id", $localUserId)->first();
+            if ($userState && $userState->state !== 'idle') {
+                $userState->state = "idle";
+                $userState->data = null;
+                $userState->save();
+            }
+
+            $this->telegram->sendMessage([
+                "chat_id" => $chatId,
+                "text" => "🔒 *Acesso Negado!* Para usar o bot, você deve estar inscrito no nosso canal oficial. \n\n Por favor, inscreva-se em: [Clique aqui para entrar]({$this->adminChannelInviteLink}) \n\n*⚠️ Alerta:* A não-inscrição fará com que o bot *NÃO envie* as mensagens automáticas configuradas em seus canais.",
+                "parse_mode" => "Markdown",
+                "disable_web_page_preview" => true,
+            ]);
+        }
+
+        return $retorno;
     }
 }

@@ -20,12 +20,43 @@ class CommandController extends Controller
 
     public function __construct(Api $telegram)
     {
+        // Telegram API
         $this->telegram = $telegram;
 
         // Variáveis globais
         $this->storageChannelId = env('TELEGRAM_STORAGE_CHANNEL_ID') ?? '';
         $this->adminChannelId = env('TELEGRAM_ADMIN_CHANNEL_ID') ?? '';
         $this->adminChannelInviteLink = env('TELEGRAM_ADMIN_CHANNEL_INVITE_PRIVATE_LINK') ?? '';
+    }
+
+    /**
+     * Delega comandos simples ao CommandController.
+     * Retorna true se um comando simples (não-fluxo) foi tratado, false caso contrário.
+     */
+    public function delegateCommand(string $text, User $dbUser, $chatId): bool
+    {
+        $localUserId = $dbUser->id;
+        $command = str_replace('/', '', explode(' ', $text)[0]);
+
+        switch (strtolower($command)) {
+            case 'start':
+                $this->handleStartCommand($localUserId, $chatId, $dbUser);
+                return true;
+            case 'commands':
+                $this->handleCommandsCommand($chatId);
+                return true;
+            case 'status':
+                $this->handleStatusCommand($chatId);
+                return true;
+            case 'cancel':
+                $this->handleCancelCommand($localUserId, $chatId);
+                return true;
+            case 'configure':
+                // Deixa o /configure ser tratado pelo fluxo logo abaixo no handlePrivateChat
+                return false;
+            default:
+                return false;
+        }
     }
 
     /**
@@ -42,7 +73,7 @@ class CommandController extends Controller
 
         $this->telegram->sendMessage([
             "chat_id" => $chatId,
-            "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal, para conferir todos os comandos digite /commands e caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancel.\n\nPara usar o bot, você deve estar inscrito no nosso [Canal Oficial]({$this->adminChannelInviteLink}).",
+            "text" => "🤖 *Olá, " . $dbUser->first_name . "! Eu sou o NextMessageBot.*\n\nEnvie o comando /configure para iniciar a automação no seu canal *(o máximo de canais permitidos para se configurar no momento é " . UserController::MAX_CHANNELS . ")*.\n\nPara conferir todos os comandos digite /commands\n\nE caso esteja configurando e queira cancelar a qualquer momento basta digitar /cancel.\n\n*Para usar o bot, você deve estar inscrito no nosso* [Canal Oficial]({$this->adminChannelInviteLink}).",
             "parse_mode" => "Markdown",
             "reply_markup" => KeyboardService::start(),
         ]);

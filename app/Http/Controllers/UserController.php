@@ -2,12 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotConfig;
 use App\Models\User;
+use Telegram\Bot\Api;
 use Telegram\Bot\Objects\User as TelegramUserObject;
 use Illuminate\Support\Facades\Log;
 
 class UserController extends Controller
 {
+    /**
+     * Limite máximo de canais que um usuário pode configurar.
+     */
+    public const MAX_CHANNELS = 5;
+    protected Api $telegram;
+
+    public function __construct(Api $telegram)
+    {
+        $this->telegram = $telegram;
+    }
+
     /**
      * Cria ou atualiza um usuário na base de dados com as informações do Telegram.
      * * @param TelegramUserObject $telegramUser
@@ -43,5 +56,28 @@ class UserController extends Controller
         Log::info("Usuário Telegram ID: {$telegramId} salvo/atualizado.");
 
         return $user;
+    }
+
+    /**
+     * Verifica se o usuário atingiu o limite máximo de canais configurados.
+     *
+     * @param int $localUserId O ID do usuário no banco de dados local.
+     * @return bool Retorna true se o limite for atingido (>= MAX_CHANNELS), false caso contrário.
+     */
+    public function hasMaxChannelsConfigured(int $localUserId, int $chatId): bool
+    {
+        // Conta quantas configurações existem para este user_id
+        $count = BotConfig::where('user_id', $localUserId)->count();
+
+        Log::debug("Contagem de canais configurados para o usuário {$localUserId}: {$count}");
+
+        $this->telegram->sendMessage([
+            "chat_id" => $chatId,
+            "text" => "🔒 *Máximo de canais configurados!* \n\nNo momento o máximo de canais que você pode configurar é *" . self::MAX_CHANNELS . "*.",
+            "parse_mode" => "Markdown",
+            "disable_web_page_preview" => true,
+        ]);
+
+        return $count >= self::MAX_CHANNELS;
     }
 }
