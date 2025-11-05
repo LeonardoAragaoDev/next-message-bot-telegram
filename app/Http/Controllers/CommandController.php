@@ -55,6 +55,7 @@ class CommandController extends Controller
                 // Deixa o /configure ser tratado pelo fluxo logo abaixo no handlePrivateChat
                 return false;
             default:
+                $this->handleUnknownCommand($chatId);
                 return false;
         }
     }
