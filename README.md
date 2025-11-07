@@ -65,7 +65,10 @@ APP_URL=http://localhost:8000 # Substitua pela sua URL pública (ngrok/Expose)
 # --- Configuração do Banco de Dados ---
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
-# ... outras configs de DB
+DB_PORT=3306
+DB_DATABASE=db
+DB_USERNAME=user
+DB_PASSWORD=pass
 
 # --- Configuração do Telegram ---
 TELEGRAM_BOT_TOKEN="SEU_TOKEN_DO_BOT_AQUI"
